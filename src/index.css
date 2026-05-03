@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Helvetica", "Arial", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Cormorant Garamond", serif;
+  --font-accent: "Space Grotesk", sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-[#0e0e10] text-[#f0f0f2] antialiased;
+  }
+}
+
+@layer components {
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-black/40;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/5 rounded-full hover:bg-indigo-500/30 transition-colors;
+  }
+
+  /* Range Input Styling */
+  input[type="range"] {
+    @apply h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    @apply appearance-none w-4 h-4 bg-indigo-500 rounded-full border-2 border-[#0e0e10] shadow-lg shadow-indigo-500/20 active:scale-95 transition-transform;
+  }
+}
+
+.canvas-container {
+  @apply rounded-xl border border-white/5;
+}
+
+/* Custom animations for phase transitions */
+.phase-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+.phase-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: all 300ms ease-out;
+}
