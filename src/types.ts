@@ -5,15 +5,6 @@ export enum AppPhase {
   NUANCE = 'nuance',
 }
 
-export interface Layer {
-  id: string;
-  name: string;
-  visible: boolean;
-  opacity: number;
-  locked: boolean;
-  type: 'reference' | 'drawing' | 'processed';
-}
-
 export type ContourAlgorithm = 'sobel' | 'laplacian' | 'threshold';
 export type FlatValueAlgorithm = 'kmeans' | 'median_cut' | 'bilateral';
 export type NuanceAlgorithm = 'difference' | 'luminance' | 'high_pass';

@@ -2,29 +2,23 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import * as fabric from 'fabric';
 import { 
   Upload, 
-  Layers, 
   Box, 
   PenTool, 
   Palette, 
-  Eye, 
   Target, 
   Download,
   Settings2,
-  ChevronRight,
-  Menu,
-  X,
   CheckCircle2,
-  Brush,
   Minus,
   Plus,
   ZoomIn,
   ZoomOut,
-  Maximize2
+  Maximize2,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   AppPhase, 
-  Layer, 
   ProcessorSettings, 
   ProcessedLayers 
 } from './types';
@@ -35,7 +29,6 @@ export default function App() {
   const [originalImage, setOriginalImage] = useState<string | null>(null);
   const [processedLayers, setProcessedLayers] = useState<ProcessedLayers>({});
   const [zoom, setZoom] = useState(1);
-  const [brushSize, setBrushSize] = useState(2);
   const [settings, setSettings] = useState<ProcessorSettings>({
     contour: { algorithm: 'sobel', threshold: 40 },
     flatValues: { algorithm: 'kmeans', clusters: 6 },
@@ -46,6 +39,7 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const fabricCanvas = useRef<fabric.Canvas | null>(null);
   const workerRef = useRef<Worker | null>(null);
+  const bgImageRef = useRef<fabric.FabricImage | null>(null);
 
   // Initialize Worker
   useEffect(() => {
@@ -75,12 +69,8 @@ export default function App() {
         width: 800,
         height: 600,
         backgroundColor: '#121214',
+        selection: false,
       });
-      fabricCanvas.current.isDrawingMode = true;
-      const brush = new fabric.PencilBrush(fabricCanvas.current);
-      brush.width = brushSize;
-      brush.color = '#ffffff';
-      fabricCanvas.current.freeDrawingBrush = brush;
 
       // Zoom via Mouse Wheel
       fabricCanvas.current.on('mouse:wheel', (opt) => {
@@ -111,13 +101,6 @@ export default function App() {
     setZoom(newZoom);
   };
 
-  // Update brush size
-  useEffect(() => {
-    if (fabricCanvas.current && fabricCanvas.current.freeDrawingBrush) {
-      fabricCanvas.current.freeDrawingBrush.width = brushSize;
-    }
-  }, [brushSize]);
-
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -126,47 +109,46 @@ export default function App() {
     reader.onload = (event) => {
       const url = event.target?.result as string;
       setOriginalImage(url);
+      setProcessedLayers({});
       
-      const imgObj = new Image();
-      imgObj.src = url;
-      imgObj.onload = () => {
-        fabric.FabricImage.fromURL(url).then((img) => {
-          if (!fabricCanvas.current || !containerRef.current) return;
-          
-          const padding = 64;
-          const maxWidth = containerRef.current.clientWidth - padding;
-          const maxHeight = containerRef.current.clientHeight - padding;
-          
-          const scaleX = maxWidth / img.width!;
-          const scaleY = maxHeight / img.height!;
-          const scale = Math.min(scaleX, scaleY, 1);
-          
-          const finalWidth = img.width! * scale;
-          const finalHeight = img.height! * scale;
+      fabric.FabricImage.fromURL(url).then((img) => {
+        if (!fabricCanvas.current || !containerRef.current) return;
+        
+        const padding = 64;
+        const maxWidth = containerRef.current.clientWidth - padding;
+        const maxHeight = containerRef.current.clientHeight - padding;
+        
+        const scaleX = maxWidth / img.width!;
+        const scaleY = maxHeight / img.height!;
+        const scale = Math.min(scaleX, scaleY, 1);
+        
+        const finalWidth = img.width! * scale;
+        const finalHeight = img.height! * scale;
 
-          fabricCanvas.current.setDimensions({
-            width: finalWidth,
-            height: finalHeight
-          });
-
-          img.scale(scale);
-          img.set({
-            selectable: false,
-            evented: false,
-            opacity: 0.4,
-            originX: 'center',
-            originY: 'center',
-            left: finalWidth / 2,
-            top: finalHeight / 2
-          });
-          
-          fabricCanvas.current.clear();
-          fabricCanvas.current.add(img);
-          fabricCanvas.current.renderAll();
-          
-          processImage(img.toCanvasElement(), AppPhase.GEOMETRY);
+        fabricCanvas.current.setDimensions({
+          width: finalWidth,
+          height: finalHeight
         });
-      };
+
+        img.scale(scale);
+        img.set({
+          selectable: false,
+          evented: false,
+          opacity: 0.4,
+          originX: 'center',
+          originY: 'center',
+          left: finalWidth / 2,
+          top: finalHeight / 2,
+          name: 'background-image'
+        });
+        
+        fabricCanvas.current.clear();
+        fabricCanvas.current.add(img);
+        bgImageRef.current = img;
+        fabricCanvas.current.renderAll();
+        
+        processImage(img.toCanvasElement(), phase);
+      });
     };
     reader.readAsDataURL(file);
   };
@@ -192,157 +174,77 @@ export default function App() {
         imageData,
         params: settings.flatValues
       });
+    } else {
+      setIsProcessing(false);
     }
   }, [originalImage, settings]);
 
   useEffect(() => {
-    if (fabricCanvas.current && phase === AppPhase.NUANCE) {
-       fabricCanvas.current.getObjects().forEach(obj => {
-         if (obj.selectable !== false) { 
-           obj.set('globalCompositeOperation', settings.nuance.colorDodge ? 'color-dodge' : 'source-over');
-         }
-       });
-       fabricCanvas.current.renderAll();
+    if (originalImage && bgImageRef.current) {
+      processImage(bgImageRef.current.toCanvasElement(), phase);
     }
-  }, [settings.nuance.colorDodge, phase]);
+  }, [phase, settings.contour.algorithm, settings.contour.threshold, settings.flatValues.algorithm, settings.flatValues.clusters]);
 
   const setAppPhase = (newPhase: AppPhase) => {
     setPhase(newPhase);
-    if (!fabricCanvas.current || !originalImage) return;
+    if (!fabricCanvas.current || !bgImageRef.current) return;
 
-    const objects = fabricCanvas.current.getObjects();
-    const bgImage = objects.find(o => o.selectable === false) as fabric.FabricImage;
-
-    if (bgImage) {
-      const scale = bgImage.scaleX;
-      const left = bgImage.left;
-      const top = bgImage.top;
-
-      if (newPhase === AppPhase.GEOMETRY) {
-        bgImage.set({ opacity: 0.4, visible: true });
-        fabric.FabricImage.fromURL(originalImage).then(img => {
-          img.set({ 
-            selectable: false, 
-            evented: false, 
-            opacity: 0.4,
-            originX: 'center',
-            originY: 'center',
-            left,
-            top,
-            scaleX: scale,
-            scaleY: scale
-          });
-          fabricCanvas.current?.remove(bgImage);
-          fabricCanvas.current?.add(img);
-          fabricCanvas.current?.sendObjectToBack(img);
-        });
-      } else if (newPhase === AppPhase.CONTOURS) {
-          processImage(bgImage.toCanvasElement(), AppPhase.CONTOURS);
-      } else if (newPhase === AppPhase.FLAT_VALUES) {
-          processImage(bgImage.toCanvasElement(), AppPhase.FLAT_VALUES);
-      } else if (newPhase === AppPhase.NUANCE) {
-         fabric.FabricImage.fromURL(originalImage).then(img => {
-          img.set({ 
-            selectable: false, 
-            evented: false, 
-            opacity: 1,
-            originX: 'center',
-            originY: 'center',
-            left,
-            top,
-            scaleX: scale,
-            scaleY: scale
-          });
-          fabricCanvas.current?.remove(bgImage);
-          fabricCanvas.current?.add(img);
-          fabricCanvas.current?.sendObjectToBack(img);
-        });
-      }
+    if (newPhase === AppPhase.GEOMETRY) {
+      bgImageRef.current.set({ opacity: 0.4 });
+    } else if (newPhase === AppPhase.NUANCE) {
+      bgImageRef.current.set({ opacity: 1 });
     }
     
     fabricCanvas.current.renderAll();
   };
 
   useEffect(() => {
-    if (originalImage && fabricCanvas.current) {
-       const bgImage = fabricCanvas.current.getObjects().find(o => o.selectable === false) as fabric.FabricImage;
-       if (bgImage) {
-         const scale = bgImage.scaleX;
-         const left = bgImage.left;
-         const top = bgImage.top;
+    if (originalImage && fabricCanvas.current && bgImageRef.current) {
+      const bg = bgImageRef.current;
+      const scale = bg.scaleX;
+      const left = bg.left;
+      const top = bg.top;
 
-         if (phase === AppPhase.CONTOURS && processedLayers.edgeMap) {
-            fabric.FabricImage.fromURL(processedLayers.edgeMap).then(img => {
-                img.set({ 
-                  selectable: false, 
-                  evented: false, 
-                  opacity: 1,
-                  originX: 'center',
-                  originY: 'center',
-                  left,
-                  top,
-                  scaleX: scale,
-                  scaleY: scale
-                });
-                fabricCanvas.current?.remove(bgImage);
-                fabricCanvas.current?.add(img);
-                fabricCanvas.current?.sendObjectToBack(img);
-            });
-         } else if (phase === AppPhase.FLAT_VALUES && processedLayers.valueMap) {
-            fabric.FabricImage.fromURL(processedLayers.valueMap).then(img => {
-                img.set({ 
-                  selectable: false, 
-                  evented: false, 
-                  opacity: 1,
-                  originX: 'center',
-                  originY: 'center',
-                  left,
-                  top,
-                  scaleX: scale,
-                  scaleY: scale
-                });
-                fabricCanvas.current?.remove(bgImage);
-                fabricCanvas.current?.add(img);
-                fabricCanvas.current?.sendObjectToBack(img);
-            });
-         }
-       }
+      if (phase === AppPhase.CONTOURS && processedLayers.edgeMap) {
+        fabric.FabricImage.fromURL(processedLayers.edgeMap).then(img => {
+          img.set({ 
+            selectable: false, evented: false, 
+            originX: 'center', originY: 'center',
+            left, top, scaleX: scale, scaleY: scale
+          });
+          fabricCanvas.current?.clear();
+          fabricCanvas.current?.add(img);
+        });
+      } else if (phase === AppPhase.FLAT_VALUES && processedLayers.valueMap) {
+        fabric.FabricImage.fromURL(processedLayers.valueMap).then(img => {
+          img.set({ 
+            selectable: false, evented: false,
+            originX: 'center', originY: 'center',
+            left, top, scaleX: scale, scaleY: scale
+          });
+          fabricCanvas.current?.clear();
+          fabricCanvas.current?.add(img);
+        });
+      } else if (phase === AppPhase.GEOMETRY || phase === AppPhase.NUANCE) {
+        fabricCanvas.current.clear();
+        fabricCanvas.current.add(bg);
+      }
     }
   }, [processedLayers, originalImage, phase]);
 
-  const exportDrawing = () => {
-    if (!fabricCanvas.current) return;
-    const objects = fabricCanvas.current.getObjects();
-    const bgImg = objects.find(o => o.selectable === false);
-    if (bgImg) bgImg.visible = false;
-    
-    const dataUrl = fabricCanvas.current.toDataURL({ format: 'png' });
+  const exportAnalysis = () => {
+    if (!originalImage || !fabricCanvas.current) return;
+    const dataUrl = fabricCanvas.current.toDataURL({ format: 'png', multiplier: 2 });
     const link = document.createElement('a');
-    link.download = 'unbaked-drawing.png';
+    link.download = `chitra-${phase}-analysis.png`;
     link.href = dataUrl;
     link.click();
-    
-    if (bgImg) bgImg.visible = true;
-    fabricCanvas.current.renderAll();
   };
-
-  // Handle auto-resize on window resize
-  useEffect(() => {
-    const handleResize = () => {
-      if (fabricCanvas.current && containerRef.current) {
-        // Implementation for dynamic canvas scaling while preserving aspect ratio
-        // This is complex with Fabric.js after load, so we mostly focus on container responsiveness
-      }
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
 
   return (
     <div className="flex flex-col lg:flex-row h-screen w-full overflow-hidden font-sans bg-[#0e0e10] text-[#f0f0f2]">
       {/* Phases and Core Controls */}
       <aside className="w-full lg:w-72 bg-[#121214] border-t lg:border-t-0 lg:border-r border-white/5 flex flex-col order-last lg:order-first z-50">
-        {/* Artistic Branding */}
         <div className="hidden lg:flex p-10 border-b border-white/5 flex-col items-center">
           <div className="relative group cursor-pointer">
             <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-full blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
@@ -350,192 +252,114 @@ export default function App() {
               <Palette size={40} className="text-white" />
             </div>
           </div>
-          <h1 className="text-3xl font-display italic tracking-tighter text-white mt-6">
-            Chitra
-          </h1>
-          <p className="text-[10px] text-indigo-400/60 uppercase tracking-[0.2em] font-black mt-2">Unbaking your art</p>
+          <h1 className="text-3xl font-display italic tracking-tighter text-white mt-6">Chitra</h1>
+          <p className="text-[10px] text-indigo-400/60 uppercase tracking-[0.2em] font-black mt-2">Neural Extraction</p>
         </div>
 
         <nav className="flex-1 flex lg:flex-col overflow-x-auto lg:overflow-y-auto no-scrollbar p-3 lg:p-4 gap-3 lg:space-y-4">
-          <PhaseButton 
-            active={phase === AppPhase.GEOMETRY} 
-            icon={<Box size={18} />} 
-            title="Geometry" 
-            onClick={() => setAppPhase(AppPhase.GEOMETRY)}
-          />
-          <PhaseButton 
-            active={phase === AppPhase.CONTOURS} 
-            icon={<PenTool size={18} />} 
-            title="Contours" 
-            onClick={() => setAppPhase(AppPhase.CONTOURS)}
-          />
-          <PhaseButton 
-            active={phase === AppPhase.FLAT_VALUES} 
-            icon={<Palette size={18} />} 
-            title="Flat Values" 
-            onClick={() => setAppPhase(AppPhase.FLAT_VALUES)}
-          />
-          <PhaseButton 
-            active={phase === AppPhase.NUANCE} 
-            icon={<Target size={18} />} 
-            title="Nuance" 
-            onClick={() => setAppPhase(AppPhase.NUANCE)}
-          />
-        </nav>
+          <PhaseButton active={phase === AppPhase.GEOMETRY} icon={<Box size={18} />} title="Geometry" onClick={() => setAppPhase(AppPhase.GEOMETRY)} />
+          <PhaseButton active={phase === AppPhase.CONTOURS} icon={<PenTool size={18} />} title="Contours" onClick={() => setAppPhase(AppPhase.CONTOURS)} />
+          <PhaseButton active={phase === AppPhase.FLAT_VALUES} icon={<Palette size={18} />} title="Flat Values" onClick={() => setAppPhase(AppPhase.FLAT_VALUES)} />
+          <PhaseButton active={phase === AppPhase.NUANCE} icon={<Target size={18} />} title="Nuance" onClick={() => setAppPhase(AppPhase.NUANCE)} />
 
-        {/* Info panel in place of buttons */}
-        <div className="hidden lg:block p-6 border-t border-white/5 text-center">
-          <p className="text-[9px] text-white/20 uppercase tracking-[0.2em] font-black">
-            Deterministic Engine v2.5
-          </p>
-        </div>
+          <div className="w-px lg:w-full lg:h-px bg-white/10 mx-1 lg:my-2 shrink-0" />
+
+          <label className="flex-1 lg:w-full flex lg:items-center justify-center lg:justify-start gap-4 p-3 lg:p-4 rounded-xl bg-white/5 hover:bg-white hover:text-black text-white/60 transition-all cursor-pointer group active:scale-95 shrink-0">
+            <div className="p-2 shrink-0 rounded-lg bg-white/5 group-hover:bg-black/5 flex items-center justify-center">
+              <Upload size={18} />
+            </div>
+            <div className="hidden lg:block text-[11px] font-black uppercase tracking-[0.2em]">Upload</div>
+            <input type="file" className="hidden" accept="image/*" onChange={handleFileUpload} />
+          </label>
+
+          {originalImage && (
+            <button onClick={exportAnalysis} className="flex-1 lg:w-full flex lg:items-center justify-center lg:justify-start gap-4 p-3 lg:p-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all active:scale-95 shrink-0 shadow-lg shadow-indigo-500/20 group">
+              <div className="p-2 shrink-0 rounded-lg bg-white/10 flex items-center justify-center group-hover:bg-white/20">
+                <Download size={18} />
+              </div>
+              <div className="hidden lg:block text-[11px] font-black uppercase tracking-[0.2em]">Export</div>
+            </button>
+          )}
+        </nav>
       </aside>
 
       {/* Main Stage */}
       <main className="flex-1 relative flex flex-col overflow-hidden bg-[#0e0e10]">
-        {/* Toolbar */}
         <header className="h-16 border-b border-white/5 flex items-center justify-between px-4 sm:px-8 bg-[#121214]/90 backdrop-blur-md z-30">
           <div className="flex items-center gap-4">
-            <div className="lg:hidden flex items-center gap-2">
-              <span className="text-xl font-display italic text-white mr-4">Chitra</span>
-            </div>
-            <div className="hidden sm:flex items-center gap-2">
-              <span className="text-[11px] font-black uppercase tracking-widest text-white/40">
-                Phase {phase.replace('_', ' ')}
-              </span>
-            </div>
+            <span className="text-[11px] font-black uppercase tracking-widest text-white/40">Phase {phase.replace('_', ' ')}</span>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4">
-             {/* Zoom Controls */}
              <div className="flex items-center gap-1 bg-white/5 border border-white/10 p-1 rounded-lg">
-                <button onClick={() => handleZoom('out')} className="p-1.5 hover:bg-white/10 rounded-md text-white/60" title="Zoom Out">
-                  <ZoomOut size={14} />
-                </button>
-                <div className="text-[10px] font-black w-12 text-center text-white/40 select-none">
-                  {Math.round(zoom * 100)}%
-                </div>
-                <button onClick={() => handleZoom('in')} className="p-1.5 hover:bg-white/10 rounded-md text-white/60" title="Zoom In">
-                  <ZoomIn size={14} />
-                </button>
-                <button onClick={() => handleZoom('reset')} className="p-1.5 hover:bg-white/10 rounded-md text-white/60 border-l border-white/5 ml-1" title="Reset Zoom">
-                  <Maximize2 size={14} />
-                </button>
+                <button onClick={() => handleZoom('out')} className="p-1.5 hover:bg-white/10 rounded-md text-white/60"><ZoomOut size={14} /></button>
+                <div className="text-[10px] font-black w-12 text-center text-white/40 select-none">{Math.round(zoom * 100)}%</div>
+                <button onClick={() => handleZoom('in')} className="p-1.5 hover:bg-white/10 rounded-md text-white/60"><ZoomIn size={14} /></button>
              </div>
 
-             {/* Brush Controls */}
-             <div className="flex items-center gap-3 bg-white/5 border border-white/10 px-2 py-1.5 rounded-lg shadow-sm">
-                <span className="text-[9px] font-black text-white/30 uppercase tracking-widest hidden xs:block">Brush</span>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setBrushSize(prev => Math.max(1, prev - 1))} className="p-1 hover:bg-white/10 rounded text-white/60">
-                    <Minus size={10} />
-                  </button>
-                  <span className="text-[10px] font-black w-4 text-center">{brushSize}</span>
-                  <button onClick={() => setBrushSize(prev => Math.min(20, prev + 1))} className="p-1 hover:bg-white/10 rounded text-white/60">
-                    <Plus size={10} />
-                  </button>
-                </div>
+             <div className="flex items-center gap-4">
+               {phase === AppPhase.CONTOURS && (
+                 <div className="flex items-center gap-3 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg">
+                    <select 
+                      value={settings.contour.algorithm}
+                      onChange={(e) => setSettings(s => ({...s, contour: {...s.contour, algorithm: e.target.value as any}}))}
+                      className="text-[10px] font-black uppercase tracking-widest bg-white/5 border border-white/10 rounded-lg px-2 py-1 outline-none text-white/80"
+                    >
+                      <option value="sobel" className="bg-[#121214]">Sobel</option>
+                      <option value="laplacian" className="bg-[#121214]">Laplacian</option>
+                      <option value="threshold" className="bg-[#121214]">Binary</option>
+                    </select>
+                 </div>
+               )}
+               {phase === AppPhase.FLAT_VALUES && (
+                 <div className="flex items-center gap-3 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg">
+                    <select 
+                      value={settings.flatValues.algorithm}
+                      onChange={(e) => setSettings(s => ({...s, flatValues: {...s.flatValues, algorithm: e.target.value as any}}))}
+                      className="text-[10px] font-black uppercase tracking-widest bg-white/5 border border-white/10 rounded-lg px-2 py-1 outline-none text-white/80"
+                    >
+                      <option value="kmeans" className="bg-[#121214]">K-Means</option>
+                      <option value="bilateral" className="bg-[#121214]">Painterly</option>
+                    </select>
+                 </div>
+               )}
              </div>
-
-             {phase === AppPhase.CONTOURS && (
-                <div className="flex items-center gap-2">
-                  <select 
-                    value={settings.contour.algorithm}
-                    onChange={(e) => setSettings(s => ({...s, contour: {...s.contour, algorithm: e.target.value as any}}))}
-                    className="text-[10px] font-black uppercase tracking-widest bg-white/5 border border-white/10 rounded-lg px-2 sm:px-3 py-1.5 outline-none text-white/80"
-                  >
-                    <option value="sobel" className="bg-[#121214]">Sobel</option>
-                    <option value="laplacian" className="bg-[#121214]">Laplacian</option>
-                    <option value="threshold" className="bg-[#121214]">Binary</option>
-                  </select>
-                </div>
-             )}
-             
-             {phase === AppPhase.FLAT_VALUES && (
-                <div className="flex items-center gap-2">
-                  <select 
-                    value={settings.flatValues.algorithm}
-                    onChange={(e) => setSettings(s => ({...s, flatValues: {...s.flatValues, algorithm: e.target.value as any}}))}
-                    className="text-[10px] font-black uppercase tracking-widest bg-white/5 border border-white/10 rounded-lg px-2 sm:px-3 py-1.5 outline-none text-white/80"
-                  >
-                    <option value="kmeans" className="bg-[#121214]">K-Means</option>
-                    <option value="bilateral" className="bg-[#121214]">Painterly</option>
-                  </select>
-                </div>
-             )}
           </div>
         </header>
 
-        {/* Canvas Area */}
         <div ref={containerRef} className="flex-1 flex items-center justify-center p-2 sm:p-8 overflow-hidden">
           <div className="relative bg-[#1a1a1e] shadow-2xl rounded-sm overflow-hidden flex items-center justify-center border border-white/5">
             <canvas ref={canvasRef} id="main-canvas" />
             {!originalImage && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-white/5 pointer-events-none p-12 text-center">
                 <Palette size={48} strokeWidth={1} className="mb-4" />
-                <p className="text-2xl font-display italic tracking-tight text-white/20">Ready for Art</p>
+                <p className="text-2xl font-display italic tracking-tight text-white/20">Ready for Analysis</p>
               </div>
             )}
           </div>
         </div>
 
-        {/* New Layer Footer with Integrated Buttons */}
-        <footer className="h-24 lg:h-20 bg-[#121214] border-t border-white/5 px-4 sm:px-8 flex items-center justify-between z-30">
-          <div className="flex items-center gap-6 flex-1 overflow-x-auto no-scrollbar py-2">
-            <div className="flex gap-2 shrink-0">
-              <label 
-                className="w-10 h-10 flex items-center justify-center bg-white/5 border border-white/10 text-white/60 rounded-full hover:bg-white hover:text-black cursor-pointer transition-all active:scale-[0.9] group" 
-                title="Upload New Subject"
-              >
-                <Upload size={18} className="group-hover:scale-110 transition-transform" />
-                <input type="file" className="hidden" accept="image/*" onChange={handleFileUpload} />
-              </label>
-              
-              {originalImage && (
-                <button 
-                  onClick={exportDrawing}
-                  className="w-10 h-10 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-full transition-all active:scale-[0.9] shadow-lg shadow-indigo-500/20"
-                  title="Save Progress"
-                >
-                  <Download size={18} />
-                </button>
-              )}
+        <footer className="h-10 bg-[#121214] border-t border-white/5 overflow-hidden flex items-center relative z-40">
+          <div className="flex items-center h-full">
+            <div className="bg-[#121214] h-full flex items-center gap-2 px-6 border-r border-white/5 z-10 whitespace-nowrap shadow-[10px_0_15px_-5px_rgba(0,0,0,0.5)]">
+              <div className={`w-2 h-2 rounded-full ${isProcessing ? 'bg-indigo-500 animate-pulse' : (originalImage ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-white/10')}`} />
+              <span className="text-[10px] font-black uppercase text-white/40 tracking-wider">
+                {isProcessing ? 'Pattern Extraction' : (originalImage ? 'Neural Mesh Ready' : 'System Standby')}
+              </span>
             </div>
-
-            <div className="w-px h-8 bg-white/5 mx-2" />
-
-            <div className="flex items-center gap-4">
-              <span className="text-[10px] font-black text-white/30 uppercase tracking-widest mr-4 shrink-0">Layers</span>
-              <div className="flex gap-2">
-              <LayerChip name="Reference" type="reference" visible />
-              <LayerChip name="Drawing" type="drawing" visible active />
-              
-              {phase === AppPhase.NUANCE && (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 shrink-0">
-                  <span className="text-[9px] font-bold text-indigo-400 uppercase">Dodge</span>
-                  <input 
-                    type="checkbox" 
-                    checked={settings.nuance.colorDodge}
-                    onChange={(e) => setSettings(s => ({...s, nuance: {...s.nuance, colorDodge: e.target.checked}}))}
-                    className="w-3 h-3 accent-indigo-600 rounded cursor-pointer"
-                  />
-                </div>
-              )}
-
-              {isProcessing && (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-600 text-white text-[9px] font-black uppercase tracking-wider animate-pulse">
-                  <Settings2 size={10} className="animate-spin" />
-                  Analyzing
-                </div>
-              )}
+            
+            <div className="flex-1 overflow-hidden pointer-events-none">
+              <motion.div animate={{ x: [0, -1500] }} transition={{ duration: 40, repeat: Infinity, ease: "linear" }} className="flex items-center gap-20 whitespace-nowrap px-8">
+                <TickerItem text="Legal Disclaimer: All uploaded images are the sole responsibility of the user." />
+                <TickerItem text="Chitra does not claim or retain ownership of any user-submitted data processed via this engine." />
+                <TickerItem text="Please ensure proper attribution to original copyright owners when utilizing analysis exports." />
+                <TickerItem text="Deterministic analysis provided by Chitra Neural Engine v2.5." />
+                <TickerItem text="Legal Disclaimer: All uploaded images are the sole responsibility of the user." />
+                <TickerItem text="Chitra does not claim or retain ownership of any user-submitted data processed via this engine." />
+              </motion.div>
             </div>
           </div>
-        </div>
-        
-        <div className="flex items-center gap-4 text-[10px] font-black text-white/10 uppercase tracking-widest pl-8 border-l border-white/5 hidden xs:flex">
-           {originalImage ? 'Active' : 'Idle'}
-        </div>
-      </footer>
+        </footer>
       </main>
     </div>
   );
@@ -565,18 +389,11 @@ function PhaseButton({ active, icon, title, onClick }: {
   );
 }
 
-function LayerChip({ name, visible, active, type }: { 
-  name: string, visible: boolean, active?: boolean, type: string 
-}) {
+function TickerItem({ text }: { text: string }) {
   return (
-    <div className={`flex items-center gap-2 px-3 py-2 rounded-full border border-white/5 transition-all shrink-0 select-none ${
-      active ? 'bg-white text-black shadow-md' : 'bg-black/20 text-white/60 hover:bg-white/5'
-    }`}>
-      <Eye size={12} className={active ? 'text-black/60' : 'text-white/20'} />
-      <span className="text-[10px] font-black uppercase tracking-widest">{name}</span>
-      <div className={`w-1.5 h-1.5 rounded-full ${
-        type === 'reference' ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)]' : (active ? 'bg-indigo-600' : 'bg-indigo-500')
-      }`} />
-    </div>
+    <span className="flex items-center gap-4 shrink-0">
+      <AlertCircle size={10} className="text-white/20" />
+      <span className="text-[10px] font-black text-white/15 uppercase tracking-[0.2em]">{text}</span>
+    </span>
   );
 }
