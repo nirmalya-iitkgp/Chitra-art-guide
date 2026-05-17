@@ -1,4 +1,4 @@
-# 🎨 Chitra: The Zen of Light
+# 🎨 Chitra: The art guide
 
 **Chitra** (चित्रा) is an advanced drawing studio that deconstructs complex visuals into logical learning layers. It helps artists master the "Arty Eye" by isolating geometry, contours, and tonal values.
 
