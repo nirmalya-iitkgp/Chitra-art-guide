@@ -3,10 +3,11 @@ export enum AppPhase {
   CONTOURS = 'contours',
   FLAT_VALUES = 'flat_values',
   NUANCE = 'nuance',
+  BLUEPRINT = 'blueprint',
 }
 
-export type ContourAlgorithm = 'sobel' | 'laplacian' | 'threshold';
-export type FlatValueAlgorithm = 'kmeans' | 'median_cut' | 'bilateral';
+export type ContourAlgorithm = 'sobel' | 'laplacian' | 'threshold' | 'canny';
+export type FlatValueAlgorithm = 'kmeans' | 'median_cut' | 'bilateral' | 'blueprint';
 export type NuanceAlgorithm = 'difference' | 'luminance' | 'high_pass';
 
 export interface ProcessorSettings {
@@ -17,6 +18,7 @@ export interface ProcessorSettings {
   flatValues: {
     algorithm: FlatValueAlgorithm;
     clusters: number;
+    smoothing: boolean;
   };
   nuance: {
     algorithm: NuanceAlgorithm;
@@ -29,4 +31,5 @@ export interface ProcessedLayers {
   edgeMap?: string; // Data URL
   valueMap?: string; // Data URL
   nuanceMap?: string; // Data URL
+  blueprintMap?: string; // Data URL
 }

@@ -14,7 +14,8 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
-  AlertCircle
+  AlertCircle,
+  Shapes
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -31,7 +32,7 @@ export default function App() {
   const [zoom, setZoom] = useState(1);
   const [settings, setSettings] = useState<ProcessorSettings>({
     contour: { algorithm: 'sobel', threshold: 40 },
-    flatValues: { algorithm: 'kmeans', clusters: 6 },
+    flatValues: { algorithm: 'kmeans', clusters: 6, smoothing: true },
     nuance: { algorithm: 'difference', sensitivity: 30, colorDodge: false }
   });
 
@@ -49,6 +50,7 @@ export default function App() {
       if (type === 'edges') updateProcessedLayer('edgeMap', result);
       if (type === 'kmeans') updateProcessedLayer('valueMap', result);
       if (type === 'difference') updateProcessedLayer('nuanceMap', result);
+      if (type === 'blueprint') updateProcessedLayer('blueprintMap', result);
       setIsProcessing(false);
     };
     return () => workerRef.current?.terminate();
@@ -174,6 +176,12 @@ export default function App() {
         imageData,
         params: settings.flatValues
       });
+    } else if (targetPhase === AppPhase.BLUEPRINT) {
+      workerRef.current.postMessage({
+        type: 'blueprint',
+        imageData,
+        params: { clusters: settings.flatValues.clusters }
+      });
     } else {
       setIsProcessing(false);
     }
@@ -225,6 +233,16 @@ export default function App() {
           fabricCanvas.current?.clear();
           fabricCanvas.current?.add(img);
         });
+      } else if (phase === AppPhase.BLUEPRINT && processedLayers.blueprintMap) {
+        fabric.FabricImage.fromURL(processedLayers.blueprintMap).then(img => {
+          img.set({ 
+            selectable: false, evented: false,
+            originX: 'center', originY: 'center',
+            left, top, scaleX: scale, scaleY: scale
+          });
+          fabricCanvas.current?.clear();
+          fabricCanvas.current?.add(img);
+        });
       } else if (phase === AppPhase.GEOMETRY || phase === AppPhase.NUANCE) {
         fabricCanvas.current.clear();
         fabricCanvas.current.add(bg);
@@ -258,6 +276,7 @@ export default function App() {
 
         <nav className="flex-1 flex lg:flex-col overflow-x-auto lg:overflow-y-auto no-scrollbar p-3 lg:p-4 gap-3 lg:space-y-4">
           <PhaseButton active={phase === AppPhase.GEOMETRY} icon={<Box size={18} />} title="Geometry" onClick={() => setAppPhase(AppPhase.GEOMETRY)} />
+          <PhaseButton active={phase === AppPhase.BLUEPRINT} icon={<Shapes size={18} />} title="Blueprint" onClick={() => setAppPhase(AppPhase.BLUEPRINT)} />
           <PhaseButton active={phase === AppPhase.CONTOURS} icon={<PenTool size={18} />} title="Contours" onClick={() => setAppPhase(AppPhase.CONTOURS)} />
           <PhaseButton active={phase === AppPhase.FLAT_VALUES} icon={<Palette size={18} />} title="Flat Values" onClick={() => setAppPhase(AppPhase.FLAT_VALUES)} />
           <PhaseButton active={phase === AppPhase.NUANCE} icon={<Target size={18} />} title="Nuance" onClick={() => setAppPhase(AppPhase.NUANCE)} />
@@ -311,16 +330,36 @@ export default function App() {
                     </select>
                  </div>
                )}
-               {phase === AppPhase.FLAT_VALUES && (
+               {(phase === AppPhase.FLAT_VALUES || phase === AppPhase.BLUEPRINT) && (
                  <div className="flex items-center gap-3 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg">
-                    <select 
-                      value={settings.flatValues.algorithm}
-                      onChange={(e) => setSettings(s => ({...s, flatValues: {...s.flatValues, algorithm: e.target.value as any}}))}
-                      className="text-[10px] font-black uppercase tracking-widest bg-white/5 border border-white/10 rounded-lg px-2 py-1 outline-none text-white/80"
-                    >
-                      <option value="kmeans" className="bg-[#121214]">K-Means</option>
-                      <option value="bilateral" className="bg-[#121214]">Painterly</option>
-                    </select>
+                   {phase === AppPhase.FLAT_VALUES && (
+                     <select 
+                       value={settings.flatValues.algorithm}
+                       onChange={(e) => setSettings(s => ({...s, flatValues: {...s.flatValues, algorithm: e.target.value as any}}))}
+                       className="text-[10px] font-black uppercase tracking-widest bg-white/5 border border-white/10 rounded-lg px-2 py-1 outline-none text-white/80 mr-2"
+                     >
+                       <option value="kmeans" className="bg-[#121214]">K-Means</option>
+                       <option value="bilateral" className="bg-[#121214]">Painterly</option>
+                     </select>
+                   )}
+                   
+                   <div className="flex items-center gap-2">
+                      <button onClick={() => setSettings(s => ({...s, flatValues: {...s.flatValues, clusters: Math.max(2, s.flatValues.clusters - 1)}}))} className="p-1 hover:bg-white/10 rounded text-white/60"><Minus size={10} /></button>
+                      <span className="text-[10px] font-black w-4 text-center">{settings.flatValues.clusters}</span>
+                      <button onClick={() => setSettings(s => ({...s, flatValues: {...s.flatValues, clusters: Math.min(24, s.flatValues.clusters + 1)}}))} className="p-1 hover:bg-white/10 rounded text-white/60"><Plus size={10} /></button>
+                   </div>
+
+                   <div className="w-px h-4 bg-white/10 mx-1" />
+
+                   <label className="flex items-center gap-2 cursor-pointer group">
+                     <input 
+                       type="checkbox" 
+                       checked={settings.flatValues.smoothing}
+                       onChange={(e) => setSettings(s => ({...s, flatValues: {...s.flatValues, smoothing: e.target.checked}}))}
+                       className="w-3 h-3 rounded border-white/10 bg-white/5 accent-indigo-500 cursor-pointer"
+                     />
+                     <span className="text-[9px] font-black uppercase text-white/40 group-hover:text-white/60 transition-colors">Smooth</span>
+                   </label>
                  </div>
                )}
              </div>
