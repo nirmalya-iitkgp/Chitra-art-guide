@@ -1,53 +1,52 @@
-# 🎨 Chitra: The art guide
+# 🎨 Chitra: The Art Guide
 
-**Chitra** (चित्रा) is an advanced drawing studio that deconstructs complex visuals into logical learning layers. It helps artists master the "Arty Eye" by isolating geometry, contours, and tonal values.
-
----
-
-## 🚀 Technical Core
-
-### 🧠 Computer Vision Engine
-- **OpenCV.js Integration**: Real-time image processing directly in the browser.
-- **Edge Detection**: Custom Sobel and Laplacian kernels for contour extraction.
-- **Tonal Decomposition**: K-Means clustering and Bilateral filtering for value mapping.
-- **Dynamic Thresholding**: Real-time adjustment of visual deconstruction intensity.
-
-### 🖌️ Creative Suite
-- **Fabric.js Canvas**: A powerful object-based canvas for non-destructive drawing.
-- **Multi-Phase Workflow**:
-  - `GEOMETRY`: Establishing the skeleton and perspective.
-  - `CONTOURS`: Defining the boundaries of form.
-  - `FLAT VALUES`: Mapping light regions.
-  - `NUANCE`: Polished rendering and subtle transitions.
-- **Precision Interaction**: Smooth zoom (mouse wheel + UI) and responsive brush physics.
-
-### 🎨 Design System
-- **Typography**: `Montserrat` (Sans) for UI precision & `Cormorant Garamond` (Serif) for artistic elegance.
-- **Aesthetic**: Minimalist Dark Mode (`#0e0e10`) with Indigo accents.
-- **Responsiveness**: Fluid layout that adapts from Ultra-Wide monitors to Mobile viewports.
+**Chitra** (चित्रा) is a drawing studio and visual analysis guide that deconstructs complex artworks into fundamental learning layers: **Geometry**, **Blueprint**, **Contours**, **Flat Values**, and **Nuance**.
 
 ---
 
-## 🛠️ Stack
-- **Framework**: React 18 + Vite
+## Unified Home Page & Masterpiece Presets
+
+The app opens directly to the **Home Page Gallery**, unifying preset masterpiece selection and custom image upload:
+- **Masterpiece Presets**: Mona Lisa, Girl with a Pearl Earring, The Starry Night, The Scream, and The Great Wave off Kanagawa.
+- **Custom Image Upload**: Direct drag-and-drop or file browsing for personal reference photos.
+- **Navigation**: Switch between the Home Page and Drawing Studio via the sidebar navigation or top bar "Artworks Home" button.
+
+
+---
+
+## Analysis Phases
+
+- **Geometry**: Low-opacity reference to sketch fundamental axes, gesture, and proportion.
+- **Blueprint**: Inverted threshold contours for line-art transfer and boundary tracing.
+- **Contours**: Real-time edge detection algorithms (Sobel gradient, Laplacian, Binary thresholding).
+- **Flat Values**: Posterization and plane simplification using K-Means color clustering and bilateral smoothing.
+- **Nuance**: High-fidelity full-color view to evaluate surface highlights and micro-contrast.
+
+---
+
+## Technical Architecture
+
+- **Framework**: React 19 + TypeScript + Vite
 - **Styling**: Tailwind CSS v4
-- **Animation**: Motion (framer-motion)
-- **Icons**: Lucide React
-- **Canvas**: Fabric.js v6
-- **ML/CV**: OpenCV.js
+- **Canvas Engine**: Fabric.js
+- **Image Processing**: Dedicated Web Worker (`imageProcessor.worker.ts`) executing off-thread Sobel, Laplacian, K-Means clustering, and bilateral filters without UI blocking.
+- **Testing**: Vitest test runner (`npm test`)
+- **Deployment**: Configured for GitHub Pages via `.github/workflows/deploy.yml` with automated build and artifact deployment.
 
 ---
 
-## 🗺️ Logical Learning Path
+## Getting Started
 
-Chitra isn't just a tool; it's a teacher. By following the sidebar phases, users are forced to ignore detail and focus on **Structure → Boundary → Value**.
+```bash
+# Install dependencies
+npm install
 
-1. **Upload Subject**: Start with any master painting or photograph.
-2. **Phase 1 (Geometry)**: Fade the original and draw the basic shapes.
-3. **Phase 2 (Contours)**: Use the edge-map to find the "line."
-4. **Phase 3 (Values)**: Use the painterly abstraction to see blocks of light/dark.
-5. **Phase 4 (Nuance)**: Finalize the piece with the original at full opacity.
+# Start local development server
+npm run dev
 
----
+# Run unit tests
+npm test
 
-*Built with ❤️ in AI Studio*
+# Build for production
+npm run build
+```

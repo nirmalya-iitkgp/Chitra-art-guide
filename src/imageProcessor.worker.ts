@@ -1,90 +1,103 @@
 import skmeans from 'skmeans';
 
-// Simple types for the worker
 type WorkerMessage = {
   type: 'edges' | 'kmeans' | 'difference' | 'blueprint';
   imageData: ImageData;
   params: any;
 };
 
-ctx: self as any;
-
 self.onmessage = (e: MessageEvent<WorkerMessage>) => {
   const { type, imageData, params } = e.data;
 
-  switch (type) {
-    case 'edges':
-      const edged = processEdges(imageData, params);
-      self.postMessage({ type: 'edges', result: edged });
-      break;
-    case 'kmeans':
-      const kmeaned = processKMeans(imageData, params);
-      self.postMessage({ type: 'kmeans', result: kmeaned });
-      break;
-    case 'difference':
-      const diffed = processDifference(imageData, params);
-      self.postMessage({ type: 'difference', result: diffed });
-      break;
-    case 'blueprint':
-      const blueprint = processBlueprint(imageData, params);
-      self.postMessage({ type: 'blueprint', result: blueprint });
-      break;
+  try {
+    switch (type) {
+      case 'edges': {
+        const edged = processEdges(imageData, params);
+        self.postMessage({ type: 'edges', result: edged });
+        break;
+      }
+      case 'kmeans': {
+        const kmeaned = processKMeans(imageData, params);
+        self.postMessage({ type: 'kmeans', result: kmeaned });
+        break;
+      }
+      case 'difference': {
+        const diffed = processDifference(imageData, params);
+        self.postMessage({ type: 'difference', result: diffed });
+        break;
+      }
+      case 'blueprint': {
+        const blueprint = processBlueprint(imageData, params);
+        self.postMessage({ type: 'blueprint', result: blueprint });
+        break;
+      }
+    }
+  } catch (err) {
+    console.error('Image processing worker error:', err);
   }
 };
 
-function bilateralFilter(imageData: ImageData, d: number, sigmaColor: number, sigmaSpace: number) {
+// Fast separable smoothing filter for noise reduction before contour/clustering
+function fastSmooth(imageData: ImageData, radius = 2): ImageData {
   const { data, width, height } = imageData;
+  const temp = new Uint8ClampedArray(data.length);
   const output = new Uint8ClampedArray(data.length);
-  const radius = Math.floor(d / 2);
 
-  const sigmaColor2 = 2 * sigmaColor * sigmaColor;
-  const sigmaSpace2 = 2 * sigmaSpace * sigmaSpace;
-
+  // Horizontal pass
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
-      let sumR = 0, sumG = 0, sumB = 0, weightSum = 0;
-      const r1 = data[idx], g1 = data[idx + 1], b1 = data[idx + 2];
-
-      for (let ky = -radius; ky <= radius; ky++) {
-        for (let kx = -radius; kx <= radius; kx++) {
-          const ny = y + ky;
-          const nx = x + kx;
-
-          if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
-            const nidx = (ny * width + nx) * 4;
-            const r2 = data[nidx], g2 = data[nidx + 1], b2 = data[nidx + 2];
-
-            const dist2 = kx * kx + ky * ky;
-            const colorDist2 = (r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2;
-
-            const weight = Math.exp(-dist2 / sigmaSpace2) * Math.exp(-colorDist2 / sigmaColor2);
-
-            sumR += r2 * weight;
-            sumG += g2 * weight;
-            sumB += b2 * weight;
-            weightSum += weight;
-          }
+      let r = 0, g = 0, b = 0, count = 0;
+      for (let kx = -radius; kx <= radius; kx++) {
+        const nx = x + kx;
+        if (nx >= 0 && nx < width) {
+          const idx = (y * width + nx) * 4;
+          r += data[idx];
+          g += data[idx + 1];
+          b += data[idx + 2];
+          count++;
         }
       }
+      const outIdx = (y * width + x) * 4;
+      temp[outIdx] = r / count;
+      temp[outIdx + 1] = g / count;
+      temp[outIdx + 2] = b / count;
+      temp[outIdx + 3] = data[outIdx + 3];
+    }
+  }
 
-      output[idx] = sumR / weightSum;
-      output[idx + 1] = sumG / weightSum;
-      output[idx + 2] = sumB / weightSum;
-      output[idx + 3] = data[idx + 3];
+  // Vertical pass
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let r = 0, g = 0, b = 0, count = 0;
+      for (let ky = -radius; ky <= radius; ky++) {
+        const ny = y + ky;
+        if (ny >= 0 && ny < height) {
+          const idx = (ny * width + x) * 4;
+          r += temp[idx];
+          g += temp[idx + 1];
+          b += temp[idx + 2];
+          count++;
+        }
+      }
+      const outIdx = (y * width + x) * 4;
+      output[outIdx] = r / count;
+      output[outIdx + 1] = g / count;
+      output[outIdx + 2] = b / count;
+      output[outIdx + 3] = temp[outIdx + 3];
     }
   }
 
   return new ImageData(output, width, height);
 }
 
-function processEdges(imageData: ImageData, params: { algorithm: string; threshold: number }) {
+function processEdges(imageData: ImageData, params: { algorithm?: string; threshold?: number }) {
   const { data, width, height } = imageData;
   const output = new ImageData(width, height);
   const greyScale = new Uint8ClampedArray(width * height);
+  const threshold = params.threshold ?? 40;
 
   for (let i = 0; i < data.length; i += 4) {
-    greyScale[i / 4] = data[i] * 0.3 + data[i + 1] * 0.59 + data[i + 2] * 0.11;
+    greyScale[i / 4] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
   }
 
   const resultData = new Uint8ClampedArray(width * height);
@@ -92,7 +105,7 @@ function processEdges(imageData: ImageData, params: { algorithm: string; thresho
 
   if (algorithm === 'threshold') {
     for (let i = 0; i < greyScale.length; i++) {
-      resultData[i] = greyScale[i] > params.threshold ? 255 : 0;
+      resultData[i] = greyScale[i] > threshold ? 255 : 0;
     }
   } else if (algorithm === 'laplacian') {
     const kernel = [
@@ -108,7 +121,7 @@ function processEdges(imageData: ImageData, params: { algorithm: string; thresho
             sum += greyScale[(y + ky) * width + (x + kx)] * kernel[(ky + 1) * 3 + (kx + 1)];
           }
         }
-        resultData[y * width + x] = Math.abs(sum) > params.threshold ? 255 : 0;
+        resultData[y * width + x] = Math.abs(sum) > threshold ? 255 : 0;
       }
     }
   } else {
@@ -126,7 +139,7 @@ function processEdges(imageData: ImageData, params: { algorithm: string; thresho
           1 * greyScale[idx + width - 1] + 2 * greyScale[idx + width] + 1 * greyScale[idx + width + 1];
 
         const mag = Math.sqrt(gx * gx + gy * gy);
-        resultData[idx] = mag > params.threshold ? 255 : 0;
+        resultData[idx] = mag > threshold ? 255 : 0;
       }
     }
   }
@@ -142,87 +155,114 @@ function processEdges(imageData: ImageData, params: { algorithm: string; thresho
   return output;
 }
 
-function processKMeans(imageData: ImageData, params: { algorithm: string; clusters: number; smoothing?: boolean }) {
-  let processedImage = imageData;
-  if (params.smoothing) {
-    processedImage = bilateralFilter(imageData, 5, 50, 50); // Faster d=5
+function processKMeans(imageData: ImageData, params: { algorithm?: string; clusters?: number; smoothing?: boolean }) {
+  const clustersCount = Math.max(2, Math.min(params.clusters ?? 6, 24));
+  let sourceImage = imageData;
+
+  if (params.smoothing || params.algorithm === 'bilateral') {
+    sourceImage = fastSmooth(imageData, 2);
   }
 
-  const { data, width, height } = processedImage;
+  const { data, width, height } = sourceImage;
+  const totalPixels = width * height;
   const output = new ImageData(width, height);
-  
-  if (params.algorithm === 'bilateral' && !params.smoothing) {
-    return bilateralFilter(imageData, 9, 75, 75);
+
+  // Subsample up to 10,000 pixels to find representative color clusters quickly
+  const maxSamples = 10000;
+  const step = Math.max(1, Math.floor(totalPixels / maxSamples));
+  const samples: number[][] = [];
+
+  for (let i = 0; i < totalPixels; i += step) {
+    const idx = i * 4;
+    samples.push([data[idx], data[idx + 1], data[idx + 2]]);
   }
 
-  const points: number[][] = [];
-  for (let i = 0; i < data.length; i += 4) {
-    points.push([data[i], data[i + 1], data[i + 2]]);
-  }
+  const res = (skmeans as any)(samples, clustersCount, 'kmpp');
+  const centroids: number[][] = res.centroids;
 
-  const res = (skmeans as any)(points, params.clusters, 'kmpp');
-  const clusters = res.centroids;
-  const assignments = res.idxs;
+  // Map all pixels in image to nearest cluster centroid
+  for (let i = 0; i < totalPixels; i++) {
+    const idx = i * 4;
+    const r = data[idx];
+    const g = data[idx + 1];
+    const b = data[idx + 2];
 
-  for (let i = 0; i < assignments.length; i++) {
-    const clusterIdx = assignments[i];
-    const color = clusters[clusterIdx];
-    output.data[i * 4] = color[0];
-    output.data[i * 4 + 1] = color[1];
-    output.data[i * 4 + 2] = color[2];
-    output.data[i * 4 + 3] = 255;
+    let bestDist = Infinity;
+    let bestCluster = 0;
+
+    for (let c = 0; c < centroids.length; c++) {
+      const cr = centroids[c][0];
+      const cg = centroids[c][1];
+      const cb = centroids[c][2];
+      const dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestCluster = c;
+      }
+    }
+
+    const assigned = centroids[bestCluster];
+    output.data[idx] = Math.round(assigned[0]);
+    output.data[idx + 1] = Math.round(assigned[1]);
+    output.data[idx + 2] = Math.round(assigned[2]);
+    output.data[idx + 3] = 255;
   }
 
   return output;
 }
 
-function processBlueprint(imageData: ImageData, params: { clusters: number }) {
-  // 1. Bilateral Filter
-  const smoothed = bilateralFilter(imageData, 7, 60, 60);
+function processBlueprint(imageData: ImageData, params: { clusters?: number }) {
+  // 1. Fast Smooth
+  const smoothed = fastSmooth(imageData, 2);
 
-  // 2. K-Means
-  const kmeaned = processKMeans(smoothed, { algorithm: 'kmeans', clusters: params.clusters });
+  // 2. Posterize into tonal planes
+  const kmeaned = processKMeans(smoothed, { clusters: params.clusters ?? 5 });
 
-  // 3. Edge Detection (Sobel as proxy for Canny)
-  const edged = processEdges(kmeaned, { algorithm: 'sobel', threshold: 15 });
+  // 3. Extract boundary contours
+  const edged = processEdges(kmeaned, { algorithm: 'sobel', threshold: 25 });
 
-  // 4. Invert Edges
+  // 4. Invert edges into crisp blueprint line-art
   const { data, width, height } = edged;
   const output = new ImageData(width, height);
+
   for (let i = 0; i < data.length; i += 4) {
-    const val = 255 - data[i]; // Invert
-    output.data[i] = val;
-    output.data[i + 1] = val;
-    output.data[i + 2] = val;
+    const inverted = 255 - data[i];
+    output.data[i] = inverted;
+    output.data[i + 1] = inverted;
+    output.data[i + 2] = inverted;
     output.data[i + 3] = 255;
   }
 
   return output;
 }
 
-function processDifference(imageData: ImageData, params: { drawingData: ImageData, sensitivity: number }) {
+function processDifference(imageData: ImageData, params: { drawingData?: ImageData; sensitivity?: number }) {
   const { data, width, height } = imageData;
-  const drawingData = params.drawingData.data;
   const output = new ImageData(width, height);
+  const drawingData = params.drawingData?.data;
+  const sensitivity = params.sensitivity ?? 30;
+
+  if (!drawingData) {
+    return output;
+  }
 
   for (let i = 0; i < data.length; i += 4) {
-    // Only compare if user has drawn something (alpha > 0)
     if (drawingData[i + 3] > 10) {
       const diffR = Math.abs(data[i] - drawingData[i]);
       const diffG = Math.abs(data[i + 1] - drawingData[i + 1]);
       const diffB = Math.abs(data[i + 2] - drawingData[i + 2]);
       const diff = (diffR + diffG + diffB) / 3;
 
-      if (diff > params.sensitivity) {
-        output.data[i] = 255; // Red for difference
-        output.data[i + 1] = 0;
-        output.data[i + 2] = 0;
+      if (diff > sensitivity) {
+        output.data[i] = 240;
+        output.data[i + 1] = 60;
+        output.data[i + 2] = 60;
         output.data[i + 3] = 200;
       } else {
-        output.data[i] = 0;
-        output.data[i + 1] = 255; // Green for matches
-        output.data[i + 2] = 0;
-        output.data[i + 3] = 100;
+        output.data[i] = 50;
+        output.data[i + 1] = 200;
+        output.data[i + 2] = 120;
+        output.data[i + 3] = 120;
       }
     } else {
       output.data[i + 3] = 0;

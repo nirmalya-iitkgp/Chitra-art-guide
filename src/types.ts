@@ -33,3 +33,15 @@ export interface ProcessedLayers {
   nuanceMap?: string; // Data URL
   blueprintMap?: string; // Data URL
 }
+
+export interface PresetArtwork {
+  id: string;
+  title: string;
+  artist: string;
+  year: string;
+  period: string;
+  src: string;
+  description: string;
+  focusTip: string;
+}
+
