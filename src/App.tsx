@@ -20,9 +20,11 @@ import {
   AppPhase, 
   ProcessorSettings, 
   ProcessedLayers,
-  PresetArtwork 
+  PresetArtwork,
+  DrawingSettings
 } from './types';
 import { HomePage } from './components/HomePage';
+import { DrawingToolbar } from './components/DrawingToolbar';
 
 type ViewMode = 'home' | 'studio';
 
@@ -40,11 +42,19 @@ export default function App() {
     nuance: { algorithm: 'difference', sensitivity: 30, colorDodge: false }
   });
 
+  const [drawing, setDrawing] = useState<DrawingSettings>({
+    isDrawing: false,
+    brushColor: '#ffffff',
+    brushWidth: 2,
+    layerOpacity: 1.0,
+  });
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fabricCanvas = useRef<fabric.Canvas | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const bgImageRef = useRef<fabric.FabricImage | null>(null);
+  const activeLayerImgRef = useRef<fabric.FabricImage | null>(null);
   const sourceImageDataRef = useRef<ImageData | null>(null);
 
   // Initialize Web Worker for background image processing
@@ -105,6 +115,16 @@ export default function App() {
     }
   }, [viewMode]);
 
+  // Sync drawing settings with Fabric Canvas
+  useEffect(() => {
+    if (!fabricCanvas.current) return;
+    fabricCanvas.current.isDrawingMode = drawing.isDrawing;
+    if (fabricCanvas.current.freeDrawingBrush) {
+      fabricCanvas.current.freeDrawingBrush.color = drawing.brushColor;
+      fabricCanvas.current.freeDrawingBrush.width = drawing.brushWidth;
+    }
+  }, [drawing.isDrawing, drawing.brushColor, drawing.brushWidth]);
+
   // Dispatch work to worker using clean source ImageData
   const processWithWorker = useCallback((imgData: ImageData | null, targetPhase: AppPhase) => {
     if (!workerRef.current || !imgData) return;
@@ -147,7 +167,7 @@ export default function App() {
     imgEl.crossOrigin = 'anonymous';
 
     imgEl.onload = () => {
-      // Create clean offscreen canvas to extract pristine ImageData (max 800px for instant CV calculations)
+      // Pristine offscreen canvas (max 800px)
       const maxDim = 800;
       const scale = Math.min(maxDim / imgEl.naturalWidth, maxDim / imgEl.naturalHeight, 1);
       const w = Math.round(imgEl.naturalWidth * scale);
@@ -197,9 +217,9 @@ export default function App() {
         fabricCanvas.current.clear();
         fabricCanvas.current.add(fabricImg);
         bgImageRef.current = fabricImg;
+        activeLayerImgRef.current = null;
         fabricCanvas.current.renderAll();
 
-        // Process active phase with off-thread worker
         processWithWorker(imgData, phase);
       });
     };
@@ -238,14 +258,18 @@ export default function App() {
     if (!sourceImageDataRef.current) return;
 
     if (newPhase === AppPhase.GEOMETRY && bgImageRef.current && fabricCanvas.current) {
-      bgImageRef.current.set({ opacity: 0.4 });
-      fabricCanvas.current.clear();
-      fabricCanvas.current.add(bgImageRef.current);
+      if (activeLayerImgRef.current) {
+        fabricCanvas.current.remove(activeLayerImgRef.current);
+        activeLayerImgRef.current = null;
+      }
+      bgImageRef.current.set({ opacity: 0.4 * drawing.layerOpacity });
       fabricCanvas.current.renderAll();
     } else if (newPhase === AppPhase.NUANCE && bgImageRef.current && fabricCanvas.current) {
-      bgImageRef.current.set({ opacity: 1.0 });
-      fabricCanvas.current.clear();
-      fabricCanvas.current.add(bgImageRef.current);
+      if (activeLayerImgRef.current) {
+        fabricCanvas.current.remove(activeLayerImgRef.current);
+        activeLayerImgRef.current = null;
+      }
+      bgImageRef.current.set({ opacity: 1.0 * drawing.layerOpacity });
       fabricCanvas.current.renderAll();
     } else {
       processWithWorker(sourceImageDataRef.current, newPhase);
@@ -261,7 +285,8 @@ export default function App() {
     const top = bg.top;
 
     const renderLayer = (dataUrl?: string) => {
-      if (!dataUrl) return;
+      if (!dataUrl || !fabricCanvas.current) return;
+      
       fabric.FabricImage.fromURL(dataUrl).then(layerImg => {
         layerImg.set({ 
           selectable: false, 
@@ -271,10 +296,20 @@ export default function App() {
           left, 
           top, 
           scaleX: scale, 
-          scaleY: scale
+          scaleY: scale,
+          opacity: drawing.layerOpacity
         });
-        fabricCanvas.current?.clear();
-        fabricCanvas.current?.add(layerImg);
+
+        // Keep background image below layer
+        bg.set({ opacity: 1 - drawing.layerOpacity + 0.15 });
+
+        if (activeLayerImgRef.current) {
+          fabricCanvas.current?.remove(activeLayerImgRef.current);
+        }
+        
+        fabricCanvas.current?.insertAt(1, layerImg);
+
+        activeLayerImgRef.current = layerImg;
         fabricCanvas.current?.renderAll();
       });
     };
@@ -286,17 +321,33 @@ export default function App() {
     } else if (phase === AppPhase.BLUEPRINT && processedLayers.blueprintMap) {
       renderLayer(processedLayers.blueprintMap);
     } else if (phase === AppPhase.GEOMETRY) {
-      bg.set({ opacity: 0.4 });
-      fabricCanvas.current.clear();
-      fabricCanvas.current.add(bg);
+      if (activeLayerImgRef.current) {
+        fabricCanvas.current.remove(activeLayerImgRef.current);
+        activeLayerImgRef.current = null;
+      }
+      bg.set({ opacity: 0.4 * drawing.layerOpacity });
       fabricCanvas.current.renderAll();
     } else if (phase === AppPhase.NUANCE) {
-      bg.set({ opacity: 1.0 });
-      fabricCanvas.current.clear();
-      fabricCanvas.current.add(bg);
+      if (activeLayerImgRef.current) {
+        fabricCanvas.current.remove(activeLayerImgRef.current);
+        activeLayerImgRef.current = null;
+      }
+      bg.set({ opacity: 1.0 * drawing.layerOpacity });
       fabricCanvas.current.renderAll();
     }
-  }, [processedLayers, phase]);
+  }, [processedLayers, phase, drawing.layerOpacity]);
+
+  const handleClearDrawing = () => {
+    if (!fabricCanvas.current) return;
+    const objects = fabricCanvas.current.getObjects();
+    // Remove only drawn path strokes
+    objects.forEach(obj => {
+      if (obj.type === 'path') {
+        fabricCanvas.current?.remove(obj);
+      }
+    });
+    fabricCanvas.current.renderAll();
+  };
 
   const handleZoom = (type: 'in' | 'out') => {
     if (!fabricCanvas.current) return;
@@ -313,7 +364,7 @@ export default function App() {
     if (!originalImage || !fabricCanvas.current) return;
     const dataUrl = fabricCanvas.current.toDataURL({ format: 'png', multiplier: 2 });
     const link = document.createElement('a');
-    link.download = `chitra-${phase}-layer.png`;
+    link.download = `chitra-${activePreset ? activePreset.id : 'artwork'}-${phase}.png`;
     link.href = dataUrl;
     link.click();
   };
@@ -367,7 +418,7 @@ export default function App() {
 
           <div className="w-px lg:w-full lg:h-px bg-white/10 mx-1 lg:my-1 shrink-0" />
 
-          {/* Unified Home Page & Upload Hub Button (Merged matching user focus selection) */}
+          {/* Unified Home Page & Upload Hub Button */}
           <button
             onClick={() => setViewMode('home')}
             className={`flex-1 lg:w-full flex items-center justify-center lg:justify-start gap-3 p-3 rounded-xl border transition-all cursor-pointer group active:scale-95 shrink-0 ${
@@ -383,7 +434,7 @@ export default function App() {
             </div>
             <div className="hidden lg:block text-left">
               <div className="text-xs font-semibold text-white">Artworks Library</div>
-              <div className="text-[10px] text-white/50">Presets & Upload</div>
+              <div className="text-[10px] text-white/50">15 Presets & Upload</div>
             </div>
           </button>
 
@@ -517,9 +568,18 @@ export default function App() {
               <canvas ref={canvasRef} id="main-canvas" />
             </div>
 
+            {/* Floating Drawing & Layer Opacity Toolbar */}
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
+              <DrawingToolbar
+                drawing={drawing}
+                onChangeDrawing={(update) => setDrawing(d => ({ ...d, ...update }))}
+                onClearDrawing={handleClearDrawing}
+              />
+            </div>
+
             {/* Study Tip for Active Preset */}
             {activePreset && (
-              <div className="absolute bottom-4 left-6 right-6 hidden md:flex items-center gap-3 p-3 rounded-xl bg-[#141418]/90 border border-white/10 backdrop-blur-md shadow-xl max-w-xl mx-auto">
+              <div className="absolute bottom-4 left-6 right-6 hidden md:flex items-center gap-3 p-3 rounded-xl bg-[#141418]/90 border border-white/10 backdrop-blur-md shadow-xl max-w-xl mx-auto z-20">
                 <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
                   <Info size={16} />
                 </div>
@@ -545,7 +605,7 @@ export default function App() {
             </div>
 
             <div className="hidden sm:flex items-center gap-4 text-[11px]">
-              <span>Select any phase on the left to deconstruct visual planes</span>
+              <span>Use the Draw / Trace tool above to sketch contours or geometric gesture</span>
             </div>
           </footer>
         </main>
